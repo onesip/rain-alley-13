@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { auctionLots, cases } from './data/cases.js'
+import { audio } from './audio.js'
 
 const SAVE_KEY = 'rain-alley-13-v2'
 const initialState = {
@@ -39,6 +40,10 @@ export default function App(){
   const [activeAnswer,setActiveAnswer] = useState(null)
   const [code,setCode] = useState(['','',''])
   const [outcome,setOutcome] = useState(null)
+  const [settingsOpen,setSettingsOpen] = useState(false)
+  const [audioSettings,setAudioSettings] = useState(()=>audio.getSettings())
+  const [installPrompt,setInstallPrompt] = useState(null)
+  const [standalone,setStandalone] = useState(()=>window.matchMedia?.('(display-mode: standalone)').matches||Boolean(navigator.standalone))
   const current = cases[Math.min(game.caseIndex,cases.length-1)]
   const found = game.found[current.id] || []
   const asked = game.asked[current.id] || []
@@ -48,37 +53,62 @@ export default function App(){
 
   useEffect(()=>localStorage.setItem(SAVE_KEY,JSON.stringify(game)),[game])
   useEffect(()=>{ setActiveClue(null);setActiveAnswer(null);setCode(['','','']); },[game.caseIndex])
+  useEffect(()=>audio.setMood(scene),[scene])
+  useEffect(()=>{
+    const beforeInstall=event=>{event.preventDefault();setInstallPrompt(event)}
+    const installed=()=>{setInstallPrompt(null);setStandalone(true)}
+    window.addEventListener('beforeinstallprompt',beforeInstall)
+    window.addEventListener('appinstalled',installed)
+    return ()=>{window.removeEventListener('beforeinstallprompt',beforeInstall);window.removeEventListener('appinstalled',installed)}
+  },[])
 
   const mutate = fn => setGame(prev=>fn(structuredClone(prev)))
   const pulse = () => navigator.vibrate?.(18)
+  const goScene = next=>{audio.start();audio.play('page');setScene(next)}
+
+  async function installApp(){
+    if(!installPrompt){setSettingsOpen(true);return}
+    await installPrompt.prompt()
+    const result=await installPrompt.userChoice
+    if(result.outcome==='accepted') setInstallPrompt(null)
+  }
+
+  function changeAudio(next){setAudioSettings(audio.update(next))}
+
+  function beginGame(){
+    audio.start();audio.play('door')
+    mutate(next=>{next.started=true;return next})
+  }
 
   function discover(clue){
-    pulse(); setActiveClue(clue)
+    pulse();audio.play('clue');setActiveClue(clue)
     if(found.includes(clue.id)) return
     mutate(next=>{ next.found[current.id]=[...(next.found[current.id]||[]),clue.id];return next })
   }
 
   function askQuestion(index){
-    pulse(); setActiveAnswer(index)
+    pulse();audio.play('question');setActiveAnswer(index)
     if(asked.includes(index)) return
     mutate(next=>{ next.asked[current.id]=[...(next.asked[current.id]||[]),index];return next })
   }
 
   function revealHint(){
+    audio.play('hint')
     mutate(next=>{next.hints[current.id]=Math.min(3,(next.hints[current.id]||0)+1);return next})
   }
 
   function submitCode(){
     if(code.join('')===current.code){
-      pulse(); mutate(next=>{next.solved[current.id]=true;return next})
+      pulse();audio.play('success');mutate(next=>{next.solved[current.id]=true;return next})
     } else {
-      pulse(); mutate(next=>{next.wrong[current.id]=(next.wrong[current.id]||0)+1;return next})
+      pulse();audio.play('wrong');mutate(next=>{next.wrong[current.id]=(next.wrong[current.id]||0)+1;return next})
       setCode(['','',''])
     }
   }
 
   function decide(decision){
     if(game.decisions[current.id]) return
+    audio.play('decision')
     mutate(next=>{
       next.coins=Math.max(0,next.coins+decision.coins)
       next.reputation+=decision.rep
@@ -91,6 +121,7 @@ export default function App(){
   }
 
   function continueNight(){
+    audio.play('door')
     setOutcome(null)
     if(game.caseIndex < cases.length-1){
       mutate(next=>{next.caseIndex++;next.night++;return next})
@@ -103,6 +134,7 @@ export default function App(){
 
   function buyLot(lot){
     if(game.coins<lot.price||game.auction.includes(lot.id)) return
+    audio.play('auction')
     mutate(next=>{next.coins-=lot.price;next.auction.push(lot.id);next.ledger.push({night:next.night,item:lot.title,choice:'拍卖购入',outcome:'隔壁档案柜在它入库时轻轻敲了三下。',coins:-lot.price,rep:0});return next})
   }
 
@@ -111,14 +143,14 @@ export default function App(){
     localStorage.removeItem(SAVE_KEY);setGame(initialState);setScene('counter');setOutcome(null)
   }
 
-  if(!game.started) return <Intro onStart={()=>mutate(next=>{next.started=true;return next})}/>
+  if(!game.started) return <><Intro onStart={beginGame} onInstall={installApp} standalone={standalone}/>{settingsOpen&&<SettingsPanel settings={audioSettings} changeAudio={changeAudio} onClose={()=>setSettingsOpen(false)} installPrompt={installPrompt} standalone={standalone} onInstall={installApp}/>}</>
 
   return <div className="game-shell">
     <div className="rain-layer" />
-    <Hud game={game} onScene={setScene} onReset={resetGame}/>
+    <Hud game={game} onScene={goScene} onSettings={()=>setSettingsOpen(true)}/>
     <main className={`scene scene-${scene}`}>
       {['counter','inspect','question','solve'].includes(scene) && <CaseHeader current={current} completeness={completeness}/>}
-      {scene==='counter' && <CounterScene current={current} setScene={setScene} solved={solved}/>}
+      {scene==='counter' && <CounterScene current={current} setScene={goScene} solved={solved}/>}
       {scene==='inspect' && <InspectScene current={current} found={found} activeClue={activeClue} discover={discover}/>}
       {scene==='question' && <QuestionScene current={current} asked={asked} activeAnswer={activeAnswer} askQuestion={askQuestion}/>}
       {scene==='solve' && <SolveScene current={current} found={found} asked={asked} hintLevel={hintLevel} revealHint={revealHint} code={code} setCode={setCode} submitCode={submitCode} solved={solved} wrong={game.wrong[current.id]||0} decide={decide} previousDecision={game.decisions[current.id]} onContinue={continueNight}/>}
@@ -126,14 +158,15 @@ export default function App(){
       {scene==='auction' && <AuctionScene game={game} buyLot={buyLot}/>}
       {scene==='fate' && <FateScene game={game}/>}
       {scene==='ledger' && <LedgerScene game={game}/>}
-      {scene==='ending' && <Ending game={game} onFate={()=>setScene('fate')}/>}
+      {scene==='ending' && <Ending game={game} onFate={()=>goScene('fate')}/>}
     </main>
-    {['counter','inspect','question','solve'].includes(scene) && <CaseNav scene={scene} setScene={setScene} solved={solved}/>}
+    {['counter','inspect','question','solve'].includes(scene) && <CaseNav scene={scene} setScene={goScene} solved={solved}/>}
     {outcome && <Outcome decision={outcome} current={current} onContinue={continueNight} last={game.caseIndex===cases.length-1}/>}
+    {settingsOpen&&<SettingsPanel settings={audioSettings} changeAudio={changeAudio} onClose={()=>setSettingsOpen(false)} installPrompt={installPrompt} standalone={standalone} onInstall={installApp} onReset={resetGame}/>}
   </div>
 }
 
-function Intro({onStart}){
+function Intro({onStart,onInstall,standalone}){
   return <div className="intro-screen">
     <div className="intro-fog"/><div className="intro-content">
       <div className="door-mark"><img src={`${import.meta.env.BASE_URL}assets/rain-alley-logo.webp`} alt="雨巷十三号徽记"/></div>
@@ -141,19 +174,33 @@ function Intro({onStart}){
       <h1>雨巷十三号</h1><h2>奇物事务所</h2>
       <p className="intro-copy">这里收购旧物、秘密，以及偶尔仍在呼吸的东西。<br/>请谨慎估价——客人支付的未必是钱。</p>
       <button className="ornate-button" onClick={onStart}>推门营业 <i>→</i></button>
+      {!standalone&&<button className="install-entry" onClick={onInstall}>安装到手机主屏幕</button>}
       <small>第一章 · 消失的星期八</small>
     </div>
   </div>
 }
 
-function Hud({game,onScene,onReset}){
+function Hud({game,onScene,onSettings}){
   return <header className="hud">
     <button className="brand-button" onClick={()=>onScene('counter')}><span className="brand-moon"><img src={`${import.meta.env.BASE_URL}assets/rain-alley-logo.webp`} alt=""/></span><span><b>雨巷十三号</b><small>奇物事务所</small></span></button>
     <div className="hud-stats"><span>第 <b>{game.night}</b> 夜</span><span>克朗 <b>{game.coins}</b></span><span>声誉 <b>{game.reputation}</b></span></div>
     <nav className="world-nav">
-      <button onClick={()=>onScene('archive')}>档案室</button><button onClick={()=>onScene('auction')}>拍卖厅</button><button onClick={()=>onScene('fate')}>命线</button><button onClick={()=>onScene('ledger')}>营业簿</button><button className="reset-mini" onClick={onReset}>⋯</button>
+      <button onClick={()=>onScene('archive')}>档案室</button><button onClick={()=>onScene('auction')}>拍卖厅</button><button onClick={()=>onScene('fate')}>命线</button><button onClick={()=>onScene('ledger')}>营业簿</button><button className="settings-button" onClick={onSettings} aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg></button>
     </nav>
   </header>
+}
+
+function SettingsPanel({settings,changeAudio,onClose,installPrompt,standalone,onInstall,onReset}){
+  const isiOS=/iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream
+  return <div className="settings-overlay" onClick={onClose}><section className="settings-panel" onClick={event=>event.stopPropagation()}>
+    <header><img src={`${import.meta.env.BASE_URL}assets/rain-alley-logo.webp`} alt=""/><span><small>RAIN ALLEY NO. 13</small><h2>事务所设置</h2></span><button onClick={onClose} aria-label="关闭">×</button></header>
+    <div className="setting-row"><span><b>雨夜环境与音乐</b><small>雨声、室内低鸣与偶尔响起的钟音</small></span><button className={settings.ambient?'switch on':'switch'} onClick={()=>changeAudio({ambient:!settings.ambient})}><i/></button></div>
+    <div className="setting-row"><span><b>交互音效</b><small>发现线索、问话、鉴定、落槌与开门声</small></span><button className={settings.effects?'switch on':'switch'} onClick={()=>changeAudio({effects:!settings.effects})}><i/></button></div>
+    <label className="volume-row"><span><b>总音量</b><small>{Math.round(settings.volume*100)}%</small></span><input type="range" min="0" max="1" step="0.05" value={settings.volume} onChange={event=>changeAudio({volume:Number(event.target.value)})}/></label>
+    <div className="install-card"><img src={`${import.meta.env.BASE_URL}icons/icon-192.png`} alt="雨巷十三号 App 图标"/><span><b>{standalone?'已经作为 App 打开':'安装雨巷十三号'}</b><small>{standalone?'当前是独立全屏模式，存档仍保存在这台设备。':isiOS?'在 Safari 中点“分享”，再选“添加到主屏幕”。':'安装后会拥有独立图标、全屏界面，并可缓存已加载内容。'}</small></span>{!standalone&&<button onClick={onInstall}>{installPrompt?'立即安装':'查看方法'}</button>}</div>
+    {onReset&&<button className="danger-action" onClick={onReset}>清除营业记录并重新开始</button>}
+    <p className="settings-foot">声音只会在你首次触碰屏幕后播放；系统静音或省电模式仍可能限制音频。</p>
+  </section></div>
 }
 
 function CaseHeader({current,completeness}){
