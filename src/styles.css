@@ -58,3 +58,11 @@
 @media(display-mode:standalone){.hud{padding-top:env(safe-area-inset-top);height:calc(72px + env(safe-area-inset-top))}.scene{height:calc(100dvh - 72px - env(safe-area-inset-top))}.intro-screen{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}.case-nav{bottom:max(12px,env(safe-area-inset-bottom))}}
 @media(max-width:900px) and (display-mode:standalone){.hud{height:calc(62px + env(safe-area-inset-top))}.scene{height:calc(100dvh - 62px - env(safe-area-inset-top))}.room-screen:before{inset:calc(62px + env(safe-area-inset-top)) 0 0}}
 @media(max-width:520px){.settings-overlay{padding-top:max(12px,env(safe-area-inset-top))}.settings-panel{padding:17px 15px}.settings-panel>header{grid-template-columns:48px 1fr 28px}.settings-panel>header img{width:48px;height:48px}.settings-panel h2{font-size:19px}.setting-row{padding:13px 2px}.install-card{grid-template-columns:48px 1fr}.install-card img{width:48px;height:48px}.install-card button{grid-column:1/-1;width:100%}}
+
+/* Keep dialogue safely above the bottom navigation in browsers and installed iOS apps. */
+@media(max-width:900px){
+  .dialogue-box,.answer-box{bottom:calc(62px + env(safe-area-inset-bottom))}
+}
+@media(max-width:520px){
+  .dialogue-box,.answer-box{bottom:calc(66px + env(safe-area-inset-bottom))}
+}
