@@ -193,7 +193,7 @@ function SolveScene({current,found,asked,hintLevel,revealHint,code,setCode,submi
 }
 
 function CaseNav({scene,setScene,solved}){
-  return <nav className="case-nav"><button className={scene==='counter'?'active':''} onClick={()=>setScene('counter')}><i>♟</i><span>接待</span></button><button className={scene==='inspect'?'active':''} onClick={()=>setScene('inspect')}><i>⌕</i><span>检视</span></button><button className={scene==='question'?'active':''} onClick={()=>setScene('question')}><i>“</i><span>问话</span></button><button className={scene==='solve'?'active':''} onClick={()=>setScene('solve')}><i>{solved?'✓':'◇'}</i><span>鉴定</span></button></nav>
+  return <nav className="case-nav"><button className={scene==='counter'?'active':''} onClick={()=>setScene('counter')}><i>♟</i><span>接待</span></button><button className={scene==='inspect'?'active':''} onClick={()=>setScene('inspect')}><i>⌕</i><span>检视</span></button><button className={scene==='question'?'active':''} onClick={()=>setScene('question')}><i>?</i><span>问话</span></button><button className={scene==='solve'?'active':''} onClick={()=>setScene('solve')}><i>{solved?'✓':'◇'}</i><span>鉴定</span></button></nav>
 }
 
 function ArchiveScene({game}){
