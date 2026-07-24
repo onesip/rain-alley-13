@@ -1,4 +1,4 @@
-const CACHE='rain-alley-13-v4'
+const CACHE='rain-alley-13-v5'
 const SHELL=['./','./index.html','./manifest.webmanifest','./assets/rain-alley-logo.webp','./icons/icon-192.png','./icons/icon-512.png']
 
 self.addEventListener('install',event=>{

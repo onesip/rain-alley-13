@@ -1,19 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { auctionLots, cases } from './data/cases.js'
+import { getButterflyEcho, getDecisionReading, getRefreshmentReaction, refreshments, tutorialPages } from './data/story.js'
 import { audio } from './audio.js'
 
 const SAVE_KEY = 'rain-alley-13-v2'
 const initialState = {
   started:false, caseIndex:0, night:1, coins:80, reputation:0,
   found:{}, asked:{}, hints:{}, wrong:{}, solved:{}, decisions:{},
-  archive:[], auction:[], ledger:[], chapterEnded:false, saveVersion:3,
+  refreshments:{}, archive:[], auction:[], ledger:[], chapterEnded:false, saveVersion:4,
 }
 
 function readSave(){
   try {
     const saved=JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')
-    const merged={ ...initialState, ...saved, saveVersion:3 }
-    if(saved.saveVersion!==3 && saved.chapterEnded && saved.caseIndex===2){
+    const merged={ ...initialState, ...saved, refreshments:saved.refreshments||{}, saveVersion:4 }
+    if((saved.saveVersion||0)<3 && saved.chapterEnded && saved.caseIndex===2){
       merged.caseIndex=3;merged.night=Math.max(4,saved.night||1);merged.chapterEnded=false
     }
     return merged
@@ -40,6 +41,8 @@ export default function App(){
   const [activeAnswer,setActiveAnswer] = useState(null)
   const [code,setCode] = useState(['','',''])
   const [outcome,setOutcome] = useState(null)
+  const [serviceOpen,setServiceOpen] = useState(false)
+  const [tutorialOpen,setTutorialOpen] = useState(false)
   const [settingsOpen,setSettingsOpen] = useState(false)
   const [audioSettings,setAudioSettings] = useState(()=>audio.getSettings())
   const [installPrompt,setInstallPrompt] = useState(null)
@@ -50,6 +53,8 @@ export default function App(){
   const hintLevel = game.hints[current.id] || 0
   const solved = Boolean(game.solved[current.id])
   const completeness = Math.min(100,(found.length + asked.length + (solved?2:0))*10)
+  const refreshment = refreshments.find(item=>item.id===game.refreshments[current.id])
+  const butterflyEcho = getButterflyEcho(game,current.id)
 
   useEffect(()=>localStorage.setItem(SAVE_KEY,JSON.stringify(game)),[game])
   useEffect(()=>{ setActiveClue(null);setActiveAnswer(null);setCode(['','','']); },[game.caseIndex])
@@ -117,7 +122,22 @@ export default function App(){
       next.ledger.push({night:next.night,item:current.title,choice:decision.title,outcome:decision.outcome,coins:decision.coins,rep:decision.rep})
       return next
     })
-    setOutcome(decision)
+    setOutcome({...decision,reading:getDecisionReading(current.id,decision.id)})
+  }
+
+  function serveRefreshment(item){
+    if(game.refreshments[current.id]||game.coins<item.price) return
+    audio.play('decision')
+    mutate(next=>{
+      next.coins-=item.price
+      next.refreshments[current.id]=item.id
+      next.ledger.push({
+        night:next.night,item:item.title,choice:`招待 ${current.visitor}`,
+        outcome:getRefreshmentReaction(current.id,item.id),coins:-item.price,rep:0,
+      })
+      return next
+    })
+    setServiceOpen(false)
   }
 
   function continueNight(){
@@ -150,7 +170,7 @@ export default function App(){
     <Hud game={game} onScene={goScene} onSettings={()=>setSettingsOpen(true)}/>
     <main className={`scene scene-${scene}`}>
       {['counter','inspect','question','solve'].includes(scene) && <CaseHeader current={current} completeness={completeness}/>}
-      {scene==='counter' && <CounterScene current={current} setScene={goScene} solved={solved}/>}
+      {scene==='counter' && <CounterScene current={current} setScene={goScene} solved={solved} refreshment={refreshment} butterflyEcho={butterflyEcho} onService={()=>setServiceOpen(true)} onTutorial={()=>setTutorialOpen(true)}/>}
       {scene==='inspect' && <InspectScene current={current} found={found} activeClue={activeClue} discover={discover}/>}
       {scene==='question' && <QuestionScene current={current} asked={asked} activeAnswer={activeAnswer} askQuestion={askQuestion}/>}
       {scene==='solve' && <SolveScene current={current} found={found} asked={asked} hintLevel={hintLevel} revealHint={revealHint} code={code} setCode={setCode} submitCode={submitCode} solved={solved} wrong={game.wrong[current.id]||0} decide={decide} previousDecision={game.decisions[current.id]} onContinue={continueNight}/>}
@@ -162,6 +182,8 @@ export default function App(){
     </main>
     {['counter','inspect','question','solve'].includes(scene) && <CaseNav scene={scene} setScene={goScene} solved={solved}/>}
     {outcome && <Outcome decision={outcome} current={current} onContinue={continueNight} last={game.caseIndex===cases.length-1}/>}
+    {serviceOpen&&<ServiceTray current={current} game={game} onChoose={serveRefreshment} onClose={()=>setServiceOpen(false)}/>}
+    {tutorialOpen&&<TutorialLedger onClose={()=>setTutorialOpen(false)}/>}
     {settingsOpen&&<SettingsPanel settings={audioSettings} changeAudio={changeAudio} onClose={()=>setSettingsOpen(false)} installPrompt={installPrompt} standalone={standalone} onInstall={installApp} onReset={resetGame}/>}
   </div>
 }
@@ -207,15 +229,18 @@ function CaseHeader({current,completeness}){
   return <div className="case-plaque"><span>委托 № {current.number}</span><b>{current.title}</b><i style={{'--progress':`${completeness}%`}}>{completeness}%</i></div>
 }
 
-function CounterScene({current,setScene,solved}){
+function CounterScene({current,setScene,solved,refreshment,butterflyEcho,onService,onTutorial}){
   return <div className="counter-stage">
     <div className="counter-object"><img src={current.objectArt} alt={current.title}/><div className="object-caption"><small>本夜来物</small><b>{current.title}</b></div></div>
     <figure className="full-character"><img src={current.characterArt} alt={`${current.visitor}立绘`}/></figure>
     <div className="visitor-tag"><span>{current.visitor}</span><small>{current.address} · {current.intent}</small></div>
     <div className="dialogue-box">
       <span className="speaker">{current.visitor}</span><p>“{current.opening}”</p>
-      <div className="quick-actions"><button onClick={()=>setScene('inspect')}>拿到灯下观察</button><button onClick={()=>setScene('question')}>先问几个问题</button><button onClick={()=>setScene('solve')}>{solved?'查看鉴定结论':'尝试鉴定'}</button></div>
+      {butterflyEcho&&<p className="butterfly-whisper">{butterflyEcho}</p>}
+      {refreshment&&<p className="service-reaction">{getRefreshmentReaction(current.id,refreshment.id)}</p>}
+      <div className="quick-actions"><button onClick={()=>setScene('inspect')}>拿到灯下观察</button><button onClick={()=>setScene('question')}>先问几个问题</button><button onClick={()=>setScene('solve')}>{solved?'查看鉴定结论':'尝试鉴定'}</button><button className="service-action" onClick={onService}>{refreshment?`已招待 · ${refreshment.title}`:'端上一份招待'}</button></div>
     </div>
+    <button className="hidden-tutorial" onClick={onTutorial} aria-label="翻开柜台角落的旧值班手册"><span>?</span><small>值班手册</small></button>
   </div>
 }
 
@@ -256,7 +281,7 @@ function SolveScene({current,found,asked,hintLevel,revealHint,code,setCode,submi
         <div className="solve-actions"><button className="ornate-button small" onClick={submitCode}>提交鉴定</button><button className="hint-action" onClick={revealHint}>{hintLevel?'再给一点提示':'我卡住了'}</button></div>
         {wrong>0&&<p className="wrong-note">{wrong>=2?'连续两次不对。提示不会扣除克朗。':'顺序不对，重新检查证据。'}</p>}
         {hintLevel>0&&<div className="hint-slip"><small>提示 {hintLevel}/3</small><p>{current.hints[hintLevel-1]}</p></div>}
-      </>:<><span className="scene-label">APPRAISAL COMPLETE</span><h2>鉴定成立</h2><p className="conclusion">{current.conclusion}</p>{recorded?<div className="recorded-decision"><small>已记录处置</small><b>{recorded.title}</b><p>{recorded.outcome}</p><button className="ornate-button small" onClick={onContinue}>{current===cases[cases.length-1]?'查看世界线结局':'迎接下一位客人'} →</button></div>:<><h3>现在决定它的去向</h3><div className="decision-grid">{current.decisions.map(d=><button key={d.id} onClick={()=>decide(d)}><b>{d.title}</b><small>{d.caption}</small><span>{d.coins>0?'+':''}{d.coins} ¤ · 声誉 {d.rep>0?'+':''}{d.rep}</span></button>)}</div></>}</>}
+      </>:<><span className="scene-label">APPRAISAL COMPLETE</span><h2>鉴定成立</h2><p className="conclusion">{current.conclusion}</p>{recorded?<div className="recorded-decision"><small>已记录处置</small><b>{recorded.title}</b><p>{recorded.outcome}</p><p className="recorded-reading">{getDecisionReading(current.id,recorded.id)[1]}</p><button className="ornate-button small" onClick={onContinue}>{current===cases[cases.length-1]?'查看世界线结局':'迎接下一位客人'} →</button></div>:<><h3>现在决定它的去向</h3><div className="decision-grid">{current.decisions.map(d=><button key={d.id} onClick={()=>decide(d)}><b>{d.title}</b><small>{d.caption}</small><span>{d.coins>0?'+':''}{d.coins} ¤ · 声誉 {d.rep>0?'+':''}{d.rep}</span></button>)}</div></>}</>}
     </section>
   </div>
 }
@@ -285,12 +310,20 @@ const fateFragments=[
 
 function FateScene({game}){
   const fate=getWorldline(game.decisions)
+  const served=Object.keys(game.refreshments||{}).length
+  const managerClues=[
+    [fate.total>=1,'第一位客人把你错认成前任店主；档案照片里，那个人的脸被雨水洗掉。'],
+    [served>=1,'柜台菜单是你的笔迹，纸张却生产于你出生前五十二年。'],
+    [fate.total>=3,'地下失踪名单由你亲手写成。墨水年龄：八十年。'],
+    [served>=3,'三位客人都记得被年老的你招待过；他们描述的菜单彼此不同。'],
+    [fate.total>=6,'所谓“前任店主”不是一个人，而是每条世界线里最先留下来的那个你。'],
+  ]
   const lines=[
     {id:'keeper',name:'守门人线',mark:'门',score:fate.score.keeper,copy:'收进档案、封存异常。你在保护小镇，也在让十三号越来越像你。'},
     {id:'mercy',name:'归还者线',mark:'灯',score:fate.score.mercy,copy:'把奇物还给真正的主人。失去的日期开始回来，但旧伤也会回来。'},
     {id:'broker',name:'乌鸦商人线',mark:'槌',score:fate.score.broker,copy:'让市场替你决定价值。钱能买路，也能买走小镇存在过的证据。'},
   ]
-  return <Room variant="fate" title="雨巷命线图" eyebrow="WORLDLINES · CONSEQUENCES" description="每一次处置都在把你推向某一种店主。命线不会提前告诉你代价，只会留下越来越明显的形状。"><div className="fate-grid">{lines.map(line=><article className={fate.dominant===line.id?'dominant':''} key={line.id}><i>{line.mark}</i><small>{line.score} / 6 次倾向</small><h3>{line.name}</h3><p>{line.copy}</p><div><span style={{width:`${Math.min(100,line.score/6*100)}%`}}/></div></article>)}</div><section className="fragment-board"><span>已拼合的真相碎片 · {fate.total}/6</span>{fateFragments.map(([id,text],i)=><p className={game.decisions[id]?'unlocked':'locked'} key={id}><b>{String(i+1).padStart(2,'0')}</b>{game.decisions[id]?text:'这段记忆仍被雨水涂黑。'}</p>)}</section></Room>
+  return <Room variant="fate" title="雨巷命线图" eyebrow="WORLDLINES · CONSEQUENCES" description="每一次处置都在把你推向某一种店主。线条记录的不是善恶，而是谁因此活进了另一位客人的故事。"><div className="fate-grid">{lines.map(line=><article className={fate.dominant===line.id?'dominant':''} key={line.id}><i>{line.mark}</i><small>{line.score} / 6 次倾向</small><h3>{line.name}</h3><p>{line.copy}</p><div><span style={{width:`${Math.min(100,line.score/6*100)}%`}}/></div></article>)}</div><section className="fragment-board"><span>世界因果碎片 · {fate.total}/6</span>{fateFragments.map(([id,text],i)=><p className={game.decisions[id]?'unlocked':'locked'} key={id}><b>{String(i+1).padStart(2,'0')}</b>{game.decisions[id]?text:'这段记忆仍被雨水涂黑。'}</p>)}</section><section className="manager-dossier"><header><small>CASE 000 · 店长本人</small><h2>谁在继承谁？</h2><p>这份档案没有委托人，也没有结案日期。每发现一次关于自己的证词，照片就更像你一点。</p></header>{managerClues.map(([open,text],i)=><p className={open?'':'locked'} key={i}><b>{String(i+1).padStart(2,'0')}</b>{open?text:'墨迹尚未干，无法阅读。'}</p>)}</section></Room>
 }
 
 function LedgerScene({game}){
@@ -299,12 +332,34 @@ function LedgerScene({game}){
 
 function Room({title,eyebrow,description,children,variant=''}){return <div className={`room-screen ${variant?`room-${variant}`:''}`}><header><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p></header>{children}</div>}
 
+function ServiceTray({current,game,onChoose,onClose}){
+  const chosen=game.refreshments[current.id]
+  return <div className="service-overlay" onClick={onClose}><section className="service-tray" onClick={event=>event.stopPropagation()}>
+    <header><span><small>HOUSE COURTESY · OPTIONAL</small><h2>给客人端点什么？</h2><p>招待会改变客人的记忆或说法。它不是奖励，也未必是善意。</p></span><button onClick={onClose} aria-label="合上菜单">×</button></header>
+    <div className="refreshment-grid">{refreshments.map(item=><button key={item.id} disabled={Boolean(chosen)||game.coins<item.price} onClick={()=>onChoose(item)}>
+      <img src={item.art} alt={item.title}/><span><small>{item.kind} · {item.price} 克朗</small><b>{item.title}</b><p>{item.promise}</p></span>
+    </button>)}</div>
+    <footer>柜台菜单的字迹与你相同。纸张鉴定结果却比事务所早八十年。</footer>
+  </section></div>
+}
+
+function TutorialLedger({onClose}){
+  return <div className="tutorial-overlay" onClick={onClose}><section className="tutorial-ledger" onClick={event=>event.stopPropagation()}>
+    <button className="tutorial-close" onClick={onClose} aria-label="合上手册">×</button>
+    <small>给不知道如何值夜的下一任店长</small><h2>柜台背面的铅笔字</h2>
+    <div>{tutorialPages.map(([title,copy])=><article key={title}><b>{title}</b><p>{copy}</p></article>)}</div>
+    <footer>最后一页被撕走了。残留的半句话是：<em>“如果客人叫出你的旧名字，不要纠正……”</em></footer>
+  </section></div>
+}
+
 function Outcome({decision,current,onContinue,last}){
-  return <div className="outcome-overlay"><div className="outcome-card"><span className="wax-seal">鉴</span><small>第十三号处置记录</small><h2>{decision.title}</h2><b>{current.title}</b><p>{decision.outcome}</p><div><span>{decision.coins>0?'+':''}{decision.coins} 克朗</span><span>声誉 {decision.rep>0?'+':''}{decision.rep}</span></div><button className="ornate-button" onClick={onContinue}>{last?'查看世界线结局':'迎接下一位客人'} →</button></div></div>
+  const reading=decision.reading||getDecisionReading(current.id,decision.id)
+  return <div className="outcome-overlay"><div className="outcome-card"><span className="wax-seal">鉴</span><small>第十三号处置记录</small><h2>{decision.title}</h2><b>{current.title}</b><p>{decision.outcome}</p><section className="outcome-reading"><small>蝴蝶效应 · 已观察</small><p>{reading[0]}</p><small>档案员批注 · 未证实</small><p>{reading[1]}</p></section><div><span>{decision.coins>0?'+':''}{decision.coins} 克朗</span><span>声誉 {decision.rep>0?'+':''}{decision.rep}</span></div><button className="ornate-button" onClick={onContinue}>{last?'查看世界线结局':'迎接下一位客人'} →</button></div></div>
 }
 
 function Ending({game,onFate}){
   const fate=getWorldline(game.decisions)
+  const served=Object.keys(game.refreshments||{}).length
   const endings={
     keeper:['第八日守门人','你合上怀表，封住其余支线。十三号从此不再寻找住户——因为它已经学会用你的眼睛守门。'],
     mercy:['把明天还给小镇','星期八在晨光里慢慢融化。失踪者回到各自门前，而前任店主留下的椅子，第一次真正空了。'],
@@ -314,5 +369,8 @@ function Ending({game,onFate}){
   const trueEnding=fate.dominant==='crossroads'&&game.reputation>=7
   const key=trueEnding?'crossroads':fate.dominant
   const [title,copy]=endings[key]
-  return <div className={`ending-screen ending-${key}`}><div><img src={`${import.meta.env.BASE_URL}assets/rain-alley-logo.webp`} alt=""/><span>第一部终章 · 世界线收束</span><h1>{title}</h1><p>{copy}</p><p>六夜里，你形成了 <b>{fate.score.keeper}</b> 点守门、<b>{fate.score.mercy}</b> 点归还、<b>{fate.score.broker}</b> 点交易倾向；声誉为 <b>{game.reputation}</b>。</p><button className="ornate-button" onClick={onFate}>查看完整命线与真相碎片 →</button></div></div>
+  const coda=served>=4
+    ?'临走前，伊莱亚斯把柜台菜单翻到背面。上面列着你今晚端出的每一份招待，以及八十年前完全相同的账目。你终于明白客人记住的从来不是食物，而是哪一位你把它递给了他们。'
+    :'清晨，柜台上仍摆着几只没有用过的杯碟。杯底各写着一个不同年份的店长姓名；每一个都与你同名。'
+  return <div className={`ending-screen ending-${key}`}><div><img src={`${import.meta.env.BASE_URL}assets/rain-alley-logo.webp`} alt=""/><span>第一部终章 · 世界线收束</span><h1>{title}</h1><p>{copy}</p><p>{coda}</p><p>六夜里，你形成了 <b>{fate.score.keeper}</b> 点守门、<b>{fate.score.mercy}</b> 点归还、<b>{fate.score.broker}</b> 点交易倾向；招待过 <b>{served}</b> 位客人，声誉为 <b>{game.reputation}</b>。</p><button className="ornate-button" onClick={onFate}>查看完整命线与店长档案 →</button></div></div>
 }
